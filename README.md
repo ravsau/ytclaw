@@ -81,15 +81,17 @@ Database: `~/.ytclaw/ytclaw.sqlite`. Override with `YTCLAW_DB` or `--db`.
 - **Audit hooks.** Pull the first 15 seconds of transcript for the last 20 videos and read them side by side.
 - **Watch velocity without a dashboard.** Every sync adds a stats row only when the numbers change. Diff them for views gained per video per day.
 - **Study competitors.** Sync any public channel with `--comments`. Their viewers' open questions are your video list.
-- **Feed an agent.** Every command has `--json`. A Claude Code or Codex session can answer "what did this channel say about X" with zero API spend. A ready-made skill is in `skills/ytclaw/SKILL.md`.
+- **Feed an agent.** Every command has `--json`. A Claude Code or Codex session can answer "what did this channel say about X" without touching the API. A ready-made skill is in `skills/ytclaw/SKILL.md`.
 - **Keep a history YouTube does not show you.** Titles, descriptions, and tags at each sync, so you can see what changed when a video took off.
 
 ## Claude Code skill
 
-`skills/ytclaw/SKILL.md` teaches an agent when to read locally, when to sync, and eight SQL recipes. Install it:
+The repo ships `skills/ytclaw/SKILL.md`. It teaches an agent when to read locally, when to sync, and eight SQL recipes. It is bundled in the package, so one command installs it:
 
 ```bash
-ln -s "$(pwd)/skills/ytclaw" ~/.claude/skills/ytclaw
+ytclaw skill install                       # writes ~/.claude/skills/ytclaw/SKILL.md
+ytclaw skill install --dir ~/.codex/skills # or anywhere else
+ytclaw skill                               # print it
 ```
 
 Then say "what did my channel say about Bedrock pricing" and the agent answers from the database.

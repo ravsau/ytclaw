@@ -11,6 +11,7 @@ sync_cache, and a hard split between free local reads and metered network calls.
   ytclaw search "phrase" [--in videos|transcripts|comments] [-n 20]
   ytclaw video VIDEO_ID | top [--by views] | stats | sql "select ..."
   ytclaw import --yaml DIR            optional: load an existing per-video YAML dump
+  ytclaw skill [install]              print or install the bundled Claude Code skill
 
 Auth: YOUTUBE_API_KEY env var, or "api_key" in ~/.ytclaw/config.json.
 Every network call is counted; `stats` shows quota units used today.
@@ -335,7 +336,16 @@ def main(argv=None):
     v = sp.add_parser("video"); v.add_argument("video_id")
     tp = sp.add_parser("top"); tp.add_argument("--by", default="views"); tp.add_argument("-n", type=int, default=20)
     sp.add_parser("stats"); sq = sp.add_parser("sql"); sq.add_argument("query")
-    a = ap.parse_args(argv); c = connect(a.db)
+    sk = sp.add_parser("skill", help="print or install the bundled agent skill"); sk.add_argument("action", nargs="?", choices=["install"])
+    sk.add_argument("--dir", default=str(Path.home() / ".claude" / "skills"), help="skills directory (default ~/.claude/skills)")
+    a = ap.parse_args(argv)
+    if a.cmd == "skill":
+        src = Path(__file__).resolve().parent / "skills" / "ytclaw" / "SKILL.md"
+        if not src.exists(): sys.exit(f"bundled skill not found at {src}")
+        if a.action != "install": print(src.read_text()); return
+        dst = Path(a.dir) / "ytclaw"; dst.mkdir(parents=True, exist_ok=True)
+        (dst / "SKILL.md").write_text(src.read_text()); print(f"installed {dst / 'SKILL.md'}"); return
+    c = connect(a.db)
 
     if a.cmd == "sync":
         yt = YT(c, api_key()); out = {}
