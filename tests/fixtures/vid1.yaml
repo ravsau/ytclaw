@@ -1,0 +1,14 @@
+video_id: vid1
+channel: test
+title: Bedrock Guardrails in five minutes
+description: A demo of guardrails pricing.
+tags: [bedrock]
+published_at: 2026-01-01T00:00:00Z
+duration: PT5M
+stats: {views: 10, likes: 2, comments: 1}
+pulled_at: 2026-01-02T00:00:00
+transcript:
+  - {text: welcome to bedrock guardrails, start: 0.0, duration: 3.0}
+  - {text: pricing is per thousand text units, start: 3.0, duration: 4.0}
+comments:
+  - {author: "@a", text: great video thank you, likes: 1, published_at: 2026-01-03T00:00:00Z, replies: [{author: "@me", text: welcome, likes: 0, published_at: 2026-01-04T00:00:00Z}]}
