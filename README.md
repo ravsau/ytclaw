@@ -74,6 +74,26 @@ ytclaw --json search "lambda"             # every command speaks JSON
 
 Database: `~/.ytclaw/ytclaw.sqlite`. Override with `YTCLAW_DB` or `--db`.
 
+## What you can do with it
+
+- **Search your own back catalog with timestamps.** "Where did I explain IAM roles?" becomes one command and a link that opens at the right second.
+- **Find the questions nobody answered.** Comments are local, so a SQL query lists every top-level question with no reply.
+- **Audit hooks.** Pull the first 15 seconds of transcript for the last 20 videos and read them side by side.
+- **Watch velocity without a dashboard.** Every sync adds a stats row only when the numbers change. Diff them for views gained per video per day.
+- **Study competitors.** Sync any public channel with `--comments`. Their viewers' open questions are your video list.
+- **Feed an agent.** Every command has `--json`. A Claude Code or Codex session can answer "what did this channel say about X" with zero API spend. A ready-made skill is in `skills/ytclaw/SKILL.md`.
+- **Keep a history YouTube does not show you.** Titles, descriptions, and tags at each sync, so you can see what changed when a video took off.
+
+## Claude Code skill
+
+`skills/ytclaw/SKILL.md` teaches an agent when to read locally, when to sync, and eight SQL recipes. Install it:
+
+```bash
+ln -s "$(pwd)/skills/ytclaw" ~/.claude/skills/ytclaw
+```
+
+Then say "what did my channel say about Bedrock pricing" and the agent answers from the database.
+
 ## What gets stored
 
 | table | holds |
@@ -125,6 +145,24 @@ Unchanged files are skipped on re-import.
 | `geocoded_locations_unresolved` negative cache with TTL | `unresolved` table with TTL |
 | `--early-stop` on a fully local page | default behaviour of `sync`, `--full` disables |
 | free local reads vs paid live reads | `search`/`video`/`top`/`stats`/`sql` are local; only `sync` touches the network, and it prints its quota cost |
+
+## Contributing
+
+This is a weekend tool with one file. Pull requests are welcome, and the list below is where help matters most. Open an issue first for anything bigger than a bug fix so we agree on the shape.
+
+Wanted:
+
+- **Analytics API path.** Retention, average view duration, traffic sources, and revenue behind an OAuth flow, into new `retention` and `traffic` tables. This is the biggest gap.
+- **Playlists and Shorts flags.** `playlists` and `playlist_items` tables; mark Shorts from duration and aspect ratio.
+- **Whisper fallback.** When captions are missing, download audio with `yt-dlp` and transcribe with `mlx-whisper` or `faster-whisper`, behind a flag.
+- **Caption rate-limit handling.** Proxy support or a polite backoff for `youtube-transcript-api`, so a 500-video channel finishes in one run.
+- **`ytclaw serve`.** A small local web UI over the database, like birdclaw's.
+- **Export.** JSONL shards per table with a manifest, so a database can be versioned or merged across machines.
+- **Comment sentiment and clustering.** Deterministic first (keywords, questions, complaints), model-based only as an optional step that the caller runs.
+- **Tests against the live API** behind an env flag, plus more offline fixtures.
+- **Packaging.** Homebrew tap and a PyPI release.
+
+Style: one file until it hurts, stdlib where possible, every network call counted, every read free. Run `PYTHON=python3 tests/test_smoke.sh` before you open a PR.
 
 ## License
 
