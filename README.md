@@ -13,6 +13,18 @@ $ ytclaw search "mlx" --in transcripts
     ...runs through [MLX] on Apple silicon...
 ```
 
+## Any public channel, not only yours
+
+An API key reads public data for every channel. Point `sync` at anyone:
+
+```bash
+ytclaw sync @Fireship                 # 837 videos with stats and tags, 35 quota units
+ytclaw sync @Fireship --comments      # their audience, searchable
+ytclaw sql "select handle, count(*) from videos join channels using(channel_id) group by 1"
+```
+
+All channels share one database. Every row carries a `channel_id`, so you can search across competitors, compare stats histories, or mine comments for what their viewers ask that nobody answers.
+
 ## Install
 
 ```bash
@@ -24,7 +36,7 @@ Python 3.10 or newer. Two dependencies: `youtube-transcript-api` for captions an
 
 ## Get a YouTube API key (5 minutes, free)
 
-ytclaw reads public channel data through the YouTube Data API v3. That needs an API key. No OAuth, no app review, no billing account.
+ytclaw reads public channel data through the YouTube Data API v3. That needs an API key and nothing else: no OAuth, no app review, no billing account, no channel ownership. Transcripts come from YouTube's caption endpoint and need no key at all.
 
 1. Open https://console.cloud.google.com/ and sign in with any Google account.
 2. Create a project. Top bar, project picker, **New project**, any name.
@@ -99,7 +111,6 @@ Unchanged files are skipped on re-import.
 ## Known limits
 
 - Public data only. Watch time, retention, and revenue need the Analytics API with OAuth, which ytclaw does not do.
-- One channel per handle argument. Run `sync` once per channel to track several in one database.
 - Transcripts depend on YouTube captions. Videos with none stay empty unless you import your own.
 
 ## Design, borrowed from birdclaw
