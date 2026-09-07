@@ -80,3 +80,12 @@ select c.handle, count(*) videos, avg(v.views) avg_views from videos v join chan
 ## Output
 
 Cite the video ID or URL for every claim. Report `NO DATA` when a table is empty for that channel instead of guessing. Never state a number you did not read from a query.
+
+## Metadata drift and image history
+
+Use `ytclaw baseline VIDEO_ID` to pin the current local metadata before external edits.
+Run `ytclaw sync @handle --thumbnails` to refresh metadata and archive image bytes,
+then `ytclaw drift VIDEO_ID` for baseline differences or `ytclaw history VIDEO_ID`
+for all observed versions. `ytclaw thumbnail SHA256 OUTPUT` exports archived bytes
+without overwriting files. Reads are local; drift requires a preceding sync to reflect
+YouTube. Tracking cannot recover unobserved edits. Baseline replaces an existing pin.

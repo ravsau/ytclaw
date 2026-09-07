@@ -84,6 +84,48 @@ Database: `~/.ytclaw/ytclaw.sqlite`. Override with `YTCLAW_DB` or `--db`.
 - **Feed an agent.** Every command has `--json`. A Claude Code or Codex session can answer "what did this channel say about X" without touching the API. A ready-made skill is in `skills/ytclaw/SKILL.md`.
 - **Keep a history YouTube does not show you.** Titles, descriptions, and tags at each sync, so you can see what changed when a video took off.
 
+## Metadata versions and drift
+
+Every sync now saves observed changes to titles, descriptions, tags, publication time,
+duration, category, language fields, and thumbnail URLs. Stats changes do not create
+metadata versions. A return to an earlier title creates another version, preserving
+its place in the timeline. Existing databases keep their last local metadata as a
+`migration` version before the next update.
+
+Pin the current local copy before editing in YouTube Studio:
+
+```bash
+ytclaw baseline VIDEO_ID             # pin latest saved metadata; replaces any previous baseline
+# Make your edits in YouTube Studio, then:
+ytclaw sync @handle --thumbnails
+ytclaw drift VIDEO_ID                # compare pinned copy with latest local observation
+ytclaw history VIDEO_ID              # versions with before/after field changes
+```
+
+`history`, `drift`, and `baseline` use only the local database. `drift` does not fetch
+YouTube. Run sync first to check the live channel. Baselines remain pinned until
+you explicitly replace them. YAML imports also create versions with source `yaml`.
+This is a local AWS Config-style recorder; it requires no AWS resources.
+
+With `--thumbnails`, sync downloads the largest available thumbnail for each video
+and stores its bytes in SQLite, deduplicated by SHA-256. It downloads again each run
+to detect replacement images at the same URL. These downloads add network traffic
+and database size but no Data API quota calls. Export a saved image using the hash
+in a version's `thumbnail_asset` field:
+
+```bash
+ytclaw thumbnail SHA256 saved-thumbnail.jpg
+```
+
+Export refuses to overwrite an existing file. Without `--thumbnails`, only thumbnail
+URLs are refreshed; an existing asset reference remains the last successfully archived
+image. Failed downloads print a warning and leave the last successful asset intact.
+
+History begins when tracking is enabled. It records observation times, not exact
+YouTube edit times, and cannot recover changes between syncs or identify the editor.
+Schedule the sync command with your own scheduler for ongoing monitoring. Only public
+metadata returned by the API is captured, not every setting in YouTube Studio.
+
 ## Claude Code skill
 
 The repo ships `skills/ytclaw/SKILL.md`. It teaches an agent when to read locally, when to sync, and eight SQL recipes. It is bundled in the package, so one command installs it:
@@ -103,6 +145,9 @@ Then say "what did my channel say about Bedrock pricing" and the agent answers f
 | `channels` | id, handle, uploads playlist |
 | `channel_snapshots` | subscribers, total views, video count, one row per sync |
 | `videos` | title, description, tags, duration, latest stats, `first_seen_at`, `last_seen_at`, `seen_count` |
+| `metadata_versions` | observed metadata versions, sources, hashes, and timestamps |
+| `metadata_baselines` | explicitly pinned version per video for drift checks |
+| `thumbnail_assets` | optional image bytes deduplicated by SHA-256 |
 | `stats_snapshots` | content-hashed per-video stats history. Same numbers again touches `last_seen_at`, no new row |
 | `comments` | top-level comments and replies, with `parent_id` |
 | `transcript_segments` | caption lines with start and duration |

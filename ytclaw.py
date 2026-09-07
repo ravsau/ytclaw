@@ -41,6 +41,14 @@ create table if not exists comments(
 create table if not exists stats_snapshots(
   video_id text, snapshot_hash text, observed_at text, last_seen_at text,
   views integer, likes integer, comments integer, source text, primary key(video_id, snapshot_hash));
+create table if not exists metadata_versions(
+  version_id integer primary key, video_id text not null, source text not null,
+  observed_at text not null, last_seen_at text not null, snapshot_hash text not null,
+  metadata_json text not null);
+create index if not exists metadata_video on metadata_versions(video_id, version_id);
+create table if not exists metadata_baselines(video_id text primary key, version_id integer not null);
+create table if not exists thumbnail_assets(
+  sha256 text primary key, content_type text, data blob not null);
 create table if not exists channel_snapshots(
   observed_at text primary key, channel_id text, subscribers integer, total_views integer,
   video_count integer, source text);
@@ -60,7 +68,13 @@ def h(*parts): return hashlib.sha1("|".join(str(p) for p in parts).encode()).hex
 def connect(db):
     Path(db).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(db); c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA); return c
+    c.executescript(SCHEMA)
+    # Preserve the last local copy before the first sync with history enabled.
+    for r in c.execute("select * from videos where video_id not in (select video_id from metadata_versions)").fetchall():
+        v = dict(r); v["tags"] = json.loads(v.pop("tags_json") or "[]")
+        snap_metadata(c, v, "migration", now())
+    c.commit()
+    return c
 
 def cache_get(c, key):
     r = c.execute("select value_json from sync_cache where cache_key=?", (key,)).fetchone()
@@ -100,8 +114,71 @@ def api_key():
     return k
 
 # ---------- upserts ----------
+METADATA_FIELDS = ("channel_id", "title", "description", "tags", "published_at", "duration",
+                   "category_id", "default_language", "default_audio_language", "thumbnails",
+                   "thumbnail_asset")
+
+def metadata_diff(before, after):
+    return {k: {"before": before.get(k), "after": after.get(k)}
+            for k in sorted(before.keys() | after.keys()) if before.get(k) != after.get(k)}
+
+def snap_metadata(c, v, source, observed_at):
+    previous = c.execute("select * from metadata_versions where video_id=? order by version_id desc limit 1",
+                         (v["video_id"],)).fetchone()
+    data = json.loads(previous["metadata_json"]) if previous else {}
+    data.update({k: S(v[k]) if k == "published_at" else v[k]
+                 for k in METADATA_FIELDS if k in v and v[k] is not None})
+    if "tags" in data: data["tags"] = sorted(set(data["tags"]))
+    encoded = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(encoded.encode()).hexdigest()
+    if previous and previous["snapshot_hash"] == digest and previous["source"] == source:
+        c.execute("update metadata_versions set last_seen_at=? where version_id=?", (observed_at, previous["version_id"]))
+        return
+    c.execute("insert into metadata_versions(video_id,source,observed_at,last_seen_at,snapshot_hash,metadata_json) values(?,?,?,?,?,?)",
+              (v["video_id"], source, observed_at, observed_at, digest, encoded))
+
+def metadata_history(c, vid):
+    result, before = [], {}
+    for r in c.execute("select * from metadata_versions where video_id=? order by version_id", (vid,)):
+        row = dict(r); data = json.loads(row.pop("metadata_json"))
+        row.update(metadata=data, changes=metadata_diff(before, data)); result.append(row); before = data
+    return result
+
+def baseline(c, vid):
+    row = c.execute("select max(version_id) from metadata_versions where video_id=?", (vid,)).fetchone()
+    if row[0] is None: raise SystemExit(f"no metadata for {vid}; sync or import first")
+    c.execute("insert or replace into metadata_baselines values(?,?)", (vid, row[0])); c.commit()
+    return {"video_id": vid, "baseline_version": row[0]}
+
+def drift(c, vid):
+    pinned = c.execute("select version_id from metadata_baselines where video_id=?", (vid,)).fetchone()
+    if not pinned: raise SystemExit(f"no baseline for {vid}; run: ytclaw baseline {vid}")
+    versions = metadata_history(c, vid)
+    base = next(v for v in versions if v["version_id"] == pinned[0])
+    latest = versions[-1]
+    changes = metadata_diff(base["metadata"], latest["metadata"])
+    return {"video_id": vid, "baseline_version": pinned[0], "latest_version": latest["version_id"],
+            "observed_at": latest["observed_at"], "drifted": bool(changes), "changes": changes}
+
+def archive_thumbnail(c, thumbnails):
+    if not thumbnails: return None
+    item = max(thumbnails.values(), key=lambda x: x.get("width", 0) * x.get("height", 0))
+    url = item["url"]
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".ytimg.com"):
+        raise ValueError("unexpected thumbnail host")
+    with urllib.request.urlopen(url, timeout=30) as response:
+        content_type = response.headers.get("Content-Type", "").split(";")[0]
+        data = response.read(10 * 1024 * 1024 + 1)
+    if not content_type.startswith("image/") or len(data) > 10 * 1024 * 1024:
+        raise ValueError("invalid or oversized thumbnail")
+    digest = hashlib.sha256(data).hexdigest()
+    c.execute("insert or ignore into thumbnail_assets values(?,?,?)", (digest, content_type, data))
+    return {"sha256": digest, "url": url, "content_type": content_type}
+
 def upsert_video(c, v, source, observed_at=None):
     t = now()
+    snap_metadata(c, v, source, observed_at or t)
     c.execute("""insert into videos(video_id,channel_id,title,description,tags_json,published_at,duration,url,
       views,likes,comments,first_seen_at,last_seen_at,seen_count) values(?,?,?,?,?,?,?,?,?,?,?,?,?,1)
       on conflict(video_id) do update set
@@ -110,7 +187,7 @@ def upsert_video(c, v, source, observed_at=None):
       published_at=coalesce(excluded.published_at,published_at), duration=coalesce(excluded.duration,duration),
       views=coalesce(excluded.views,views), likes=coalesce(excluded.likes,likes), comments=coalesce(excluded.comments,comments),
       last_seen_at=excluded.last_seen_at, seen_count=seen_count+1""",
-      (v["video_id"], v.get("channel_id"), v.get("title"), v.get("description"), json.dumps(v.get("tags") or []),
+      (v["video_id"], v.get("channel_id"), v.get("title"), v.get("description"), json.dumps(v["tags"] or []) if "tags" in v else None,
        S(v.get("published_at")), v.get("duration"), f"https://www.youtube.com/watch?v={v['video_id']}",
        v.get("views"), v.get("likes"), v.get("comments"), t, t))
     if v.get("title") is not None:
@@ -167,7 +244,7 @@ def sync_channel(c, yt, handle):
         c.execute("update channels set last_seen_at=? where channel_id=?", (now(), ch["channel_id"]))
     return ch
 
-def sync_videos(c, yt, ch, full):
+def sync_videos(c, yt, ch, full, thumbnails=False):
     """Walk the uploads playlist newest-first. Early-stop when a whole page is already local
     (unless --full). Then refresh stats for every local video, 50 per unit."""
     local = {r[0] for r in c.execute("select video_id from videos where channel_id=?", (ch["channel_id"],))}
@@ -193,8 +270,15 @@ def sync_videos(c, yt, ch, full):
         for it in d.get("items", []):
             sn, st = it["snippet"], it.get("statistics", {})
             seen.add(it["id"])
-            upsert_video(c, {"video_id": it["id"], "channel_id": ch["channel_id"], "title": sn.get("title"),
-                             "description": sn.get("description"), "tags": sn.get("tags"), "published_at": sn.get("publishedAt"),
+            extra = {"category_id": sn.get("categoryId"), "default_language": sn.get("defaultLanguage", ""),
+                     "default_audio_language": sn.get("defaultAudioLanguage", ""), "thumbnails": sn.get("thumbnails", {})}
+            if thumbnails:
+                try:
+                    extra["thumbnail_asset"] = archive_thumbnail(c, extra["thumbnails"])
+                except (OSError, ValueError) as e:
+                    print(f"thumbnail archive failed for {it['id']}: {type(e).__name__}", file=sys.stderr)
+            upsert_video(c, {**extra, "video_id": it["id"], "channel_id": ch["channel_id"], "title": sn.get("title"),
+                             "description": sn.get("description"), "tags": sn.get("tags", []), "published_at": sn.get("publishedAt"),
                              "duration": it.get("contentDetails", {}).get("duration"),
                              "views": int(st["viewCount"]) if "viewCount" in st else None,
                              "likes": int(st["likeCount"]) if "likeCount" in st else None,
@@ -298,6 +382,7 @@ def video(c, vid):
     v = c.execute("select * from videos where video_id=?", (vid,)).fetchone()
     if not v: return None
     d = dict(v); d["tags"] = json.loads(d.pop("tags_json") or "[]")
+    d["metadata_history"] = metadata_history(c, vid)
     d["stats_history"] = [dict(r) for r in c.execute("select observed_at,last_seen_at,views,likes,comments,source from stats_snapshots where video_id=? order by observed_at", (vid,))]
     d["transcript_segments"] = c.execute("select count(*) from transcript_segments where video_id=?", (vid,)).fetchone()[0]
     d["comment_count_local"] = c.execute("select count(*) from comments where video_id=?", (vid,)).fetchone()[0]
@@ -330,10 +415,15 @@ def main(argv=None):
     sy.add_argument("--full", action="store_true", help="walk the whole uploads playlist, no early stop")
     sy.add_argument("--limit", type=int, default=200, help="max videos per run for comments/transcripts")
     sy.add_argument("--comment-max-age", type=int, default=7, help="days before a video's comments are refetched")
+    sy.add_argument("--thumbnails", action="store_true", help="archive highest-resolution thumbnail bytes on each sync")
     sy.add_argument("--langs", default="en,en-US,en-GB")
     i = sp.add_parser("import"); i.add_argument("--yaml", required=True)
     s = sp.add_parser("search"); s.add_argument("query"); s.add_argument("--in", dest="scope", default="all", choices=["all", "videos", "transcripts", "comments"]); s.add_argument("-n", type=int, default=20)
     v = sp.add_parser("video"); v.add_argument("video_id")
+    for name in ("history", "baseline", "drift"):
+        parser = sp.add_parser(name); parser.add_argument("video_id")
+    ex = sp.add_parser("thumbnail", help="export archived thumbnail by SHA-256")
+    ex.add_argument("sha256"); ex.add_argument("output")
     tp = sp.add_parser("top"); tp.add_argument("--by", default="views"); tp.add_argument("-n", type=int, default=20)
     sp.add_parser("stats"); sq = sp.add_parser("sql"); sq.add_argument("query")
     sk = sp.add_parser("skill", help="print or install the bundled agent skill"); sk.add_argument("action", nargs="?", choices=["install"])
@@ -351,7 +441,7 @@ def main(argv=None):
         yt = YT(c, api_key()); out = {}
         try:
             ch = sync_channel(c, yt, a.handle)
-            out = {"channel": ch["title"], **sync_videos(c, yt, ch, a.full)}
+            out = {"channel": ch["title"], **sync_videos(c, yt, ch, a.full, a.thumbnails)}
             if a.comments: out.update(sync_comments(c, yt, ch, a.comment_max_age, a.limit))
             if a.transcripts: out.update(sync_transcripts(c, ch, a.limit, a.langs.split(",")))
         except QuotaExhausted as e:
@@ -364,6 +454,14 @@ def main(argv=None):
     elif a.cmd == "import": out = import_yaml_dir(c, a.yaml)
     elif a.cmd == "search": out = search(c, a.query, a.scope, a.n)
     elif a.cmd == "video": out = video(c, a.video_id)
+    elif a.cmd == "history": out = metadata_history(c, a.video_id)
+    elif a.cmd == "baseline": out = baseline(c, a.video_id)
+    elif a.cmd == "drift": out = drift(c, a.video_id)
+    elif a.cmd == "thumbnail":
+        row = c.execute("select data from thumbnail_assets where sha256=?", (a.sha256,)).fetchone()
+        if not row: raise SystemExit("thumbnail not found")
+        with open(a.output, "xb") as f: f.write(row[0])
+        out = {"output": a.output, "sha256": a.sha256}
     elif a.cmd == "top": out = top(c, a.by, a.n)
     elif a.cmd == "stats": out = stats(c, a.db)
     elif a.cmd == "sql":
