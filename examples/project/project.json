@@ -1,0 +1,6 @@
+{
+  "title_file": "title.txt",
+  "description_file": "description.txt",
+  "tags_file": "tags.json",
+  "metadata": {"default_language": "en"}
+}

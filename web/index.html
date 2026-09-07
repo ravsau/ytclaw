@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ytclaw · Channel memory</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a href="#main" class="skip">Skip to content</a>
+    <aside class="rail">
+      <a class="brand" href="/">ytclaw<span>CHANNEL MEMORY</span></a>
+      <nav aria-label="Main navigation">
+        <button class="nav active" data-view="overview">
+          01 <span>This week</span></button
+        ><button class="nav" data-view="library">
+          02 <span>Video library</span></button
+        ><button class="nav" data-view="changes">
+          03 <span>Change history</span></button
+        ><button class="nav" data-view="questions">
+          04 <span>Viewer questions</span></button
+        ><button class="nav" data-view="collection">
+          05 <span>Collection health</span>
+        </button>
+      </nav>
+      <div class="rail-foot">
+        <span class="status-dot"></span> Local reading desk
+        <p>Your channel. Your records.</p>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="toolbar">
+        <label
+          >CHANNEL<select id="channel">
+            <option value="">All channels</option>
+          </select></label
+        >
+        <div class="toolbar-actions">
+          <button id="refresh" class="quiet">Refresh local data</button
+          ><button id="sync" class="dark">Sync channel</button>
+        </div>
+      </header>
+      <main id="main">
+        <div id="demo" class="banner hidden">
+          SAMPLE CHANNEL · Synthetic data. Explore freely; no API key needed.
+        </div>
+        <div id="notice" role="status" aria-live="polite"></div>
+        <div class="heading">
+          <div>
+            <p class="eyebrow" id="eyebrow">THE WEEKLY READ</p>
+            <h1 id="title">A record of what changed.</h1>
+            <p class="subtitle" id="subtitle">
+              Find the useful details in your channel’s history.
+            </p>
+          </div>
+          <a id="download" class="quiet" href="/api/report.md" download
+            >Export report ↗</a
+          >
+        </div>
+        <div class="controls">
+          <form id="search-form" role="search">
+            <label class="sr-only" for="search">Search your channel</label
+            ><input
+              id="search"
+              type="search"
+              placeholder="Search videos, transcripts, and comments…"
+            /><label class="sr-only" for="scope">Search in</label
+            ><select id="scope">
+              <option value="all">Everything</option>
+              <option value="videos">Videos</option>
+              <option value="transcripts">Transcripts</option>
+              <option value="comments">Comments</option></select
+            ><button class="dark" type="submit">Search</button>
+          </form>
+          <label class="date-label">SINCE<input type="date" id="since" /></label
+          ><label class="date-label"
+            >UNTIL<input type="date" id="until"
+          /></label>
+        </div>
+        <div id="content" aria-live="polite">
+          <p class="empty">Loading your local records…</p>
+        </div>
+      </main>
+      <footer>
+        Built from observed data. Missing records are never treated as zero.
+      </footer>
+    </div>
+    <dialog id="video-dialog">
+      <div class="dialog-top">
+        <span class="eyebrow">VIDEO RECORD</span
+        ><button
+          id="close-dialog"
+          class="quiet"
+          aria-label="Close video details"
+        >
+          Close ×
+        </button>
+      </div>
+      <div id="video-content"></div>
+    </dialog>
+  </body>
+</html>

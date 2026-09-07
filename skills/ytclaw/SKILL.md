@@ -1,91 +1,131 @@
 ---
 name: ytclaw
-description: "Local SQLite memory for YouTube channels. Use for ANY question about a channel's videos, transcripts, comments, or view history: 'what did I say about X', 'which video mentions Y', 'what do viewers ask in comments', 'top videos', 'how did video Z grow', competitor research, content gaps. Reads are free and instant. Only `sync` touches the network and it spends Data API quota units, never dollars."
-argument-hint: "[sync @handle | search 'phrase' | video ID | top | stats]"
+description: "Search local YouTube channel memory, inspect metadata and thumbnail history, find viewer questions, report observed growth, and check collection coverage. Use the CLI for channel research and drift checks; live collection is explicit."
+argument-hint: "[search phrase | report --channel @handle | changes | project drift VIDEO_ID | sync @handle]"
 ---
 
 # ytclaw
 
-One SQLite file per machine (`~/.ytclaw/ytclaw.sqlite`) holding every synced channel: videos, descriptions, tags, a stats history, comments with replies, transcript segments, FTS5 search. Command: `ytclaw`. If it is missing: `uv tool install git+https://github.com/ravsau/ytclaw`.
+Channel data lives in `~/.ytclaw/ytclaw.sqlite`, overridden by `--db` or `YTCLAW_DB`.
+Install from GitHub with `uv tool install git+https://github.com/ravsau/ytclaw`, or
+`uv tool install .` from a checkout. The CLI and JSON are the integration interface.
 
-## Rule: local first
+## Start with local evidence
 
-Answer from the database before any network call. `ytclaw stats` tells you what is local and how much quota today's syncs used. Run `sync` only when the user asks for fresh data or `stats` shows the channel is absent or stale.
-
-## Read commands (free)
-
-```bash
-ytclaw stats                                        # channels, counts, quota used today
-ytclaw search "phrase"                              # videos + transcripts + comments, ranked
-ytclaw search "phrase" --in transcripts -n 10       # returns watch URLs with &t= offsets
-ytclaw search "phrase" --in comments
-ytclaw video VIDEO_ID                               # metadata, tags, full stats history
-ytclaw top --by views|likes|comments -n 20
-ytclaw sql "select ..."                             # read-only; add --json for parsing
-```
-
-Always pass `--json` when you will parse the output.
-
-## Sync commands (metered, quota units)
+Run `ytclaw doctor` or `ytclaw stats` to see channels, coverage, and freshness. A
+successful sync does not mean all transcripts or comment scans are present. Use
+`--json` before the command when parsing results. Cite source URLs and observation
+dates. State missing data explicitly; never treat missing rows as zero.
 
 ```bash
-ytclaw sync @handle                       # videos + stats, ~1 unit per 50 videos, early-stops
-ytclaw sync @handle --comments            # +1 unit per video with comments
-ytclaw sync @handle --transcripts         # 0 units; caption endpoint rate-limits after ~40
-ytclaw sync @handle --limit 40            # cap per run; default 200
+ytclaw --json search "setup" --channel @handle --in transcripts
+ytclaw --json questions --channel @handle
+ytclaw --json changes --channel @handle --since 2026-09-01
+ytclaw --json growth --channel @handle --since 2026-09-01
+ytclaw --json report --channel @handle
+ytclaw video VIDEO_ID
+ytclaw history VIDEO_ID
+ytclaw runs --channel @handle
 ```
 
-Exit 75 means a quota or rate-limit checkpoint. Progress is saved. Tell the user and continue with local data. Never loop on `sync` to push through a block.
+`search` and `top` dates filter video publication time. `changes` dates filter
+metadata observations. `questions` dates filter comment publication. Transcript
+results contain neighboring segments and timestamp links. `questions` uses a question
+mark filter and excludes unverified reply scans unless `--include-unverified` is used.
+It detects absence of any observed reply, not absence of a channel-owner response.
 
-Needs `YOUTUBE_API_KEY` or `~/.ytclaw/config.json`. If missing, point the user at the README section "Get a YouTube API key" and stop.
+`growth` uses dated observations and includes actual boundaries, partial-window flags,
+and negative changes. Do not use min/max over legacy `stats_snapshots` as a substitute
+for chronological growth. `report` defaults to seven days, 20 entries per list.
 
-## Recipes
+## Live collection
 
-**What did the channel say about X, with timestamps**
-`ytclaw search "X" --in transcripts -n 15` then group hits by video.
+```bash
+ytclaw init --channel @handle                 # hidden API key prompt
+ytclaw sync @handle --comments --transcripts --thumbnails --limit 30
+ytclaw sync @handle --full                    # walk the complete uploads list
+```
 
-**Unanswered viewer questions**
+Only sync when fresh data is requested or needed. Data API calls spend quota units.
+Thumbnail downloads and caption requests add network traffic. `--limit` caps comment
+and transcript videos, not metadata or pages per video's comments. Full replies are
+paginated. Interrupted collection retains committed upload pages, metadata batches,
+and comment pages. Run logs show partial and failed work.
+
+Exit `75` means partial collection or a quota/rate-limit stop. Do not repeatedly retry
+a blocked caption source. Exit `1` means failure. API key setup does not grant owner
+analytics access. `doctor` checks configuration without making network requests.
+
+## Metadata and working-file drift
+
+```bash
+ytclaw baseline VIDEO_ID                     # pin latest local version; replaces a prior pin
+ytclaw sync @handle --thumbnails
+ytclaw drift VIDEO_ID
+ytclaw project link VIDEO_ID project.json
+ytclaw project drift VIDEO_ID
+ytclaw thumbnail SHA256 output.jpg
+```
+
+Baseline drift compares database versions. Project drift rereads mapped local files
+and compares only mapped fields against the last API observation, not a YAML import.
+The manifest supports `title_file`, `description_file`, `tags_file`, `thumbnail_file`,
+and inline `metadata`. Paths are relative to the manifest. Thumbnail byte differences
+are separate from metadata drift because YouTube may recompress uploads. Always report
+the image check time. A metadata-only sync retains the last archived image.
+
+History contains observed versions, not exact edit times, editor identities, or all
+concurrent YouTube experiment variants. Do not infer causality from growth after an edit.
+
+## Owner reports and notes
+
+```bash
+ytclaw auth status
+ytclaw analytics show VIDEO_ID
+ytclaw analytics compare VIDEO_ID --version 12 --days 7
+ytclaw analytics import VIDEO_ID --csv video-by-date.csv
+ytclaw experiment list VIDEO_ID
+```
+
+`auth login --client-secret desktop-client.json` requires the optional `owner`
+dependencies and user consent in a browser. The API path supports daily watch time,
+retention, and traffic reports. Studio CSV import handles documented date/metric
+columns, including impressions and CTR. Missing days are not zero. `compare` excludes
+the observed change date and is not an A/B test. Experiment notes are manual records.
+Never print OAuth tokens or API keys. Database exports do not include credentials.
+
+## Monitoring, backups, and UI
+
+```bash
+ytclaw watch add @handle --every-hours 24 --comments --thumbnails
+ytclaw watch run --once
+ytclaw watch install                         # installs a per-user OS timer
+ytclaw watch list
+ytclaw backup archive.sqlite
+ytclaw export archive.zip
+ytclaw --db restored.sqlite restore archive.zip
+ytclaw serve
+```
+
+Do not claim that a scheduled collector runs while the machine is off. Creating a job
+and installing its timer are separate actions. Restore and export refuse overwrites.
+The loopback browser reads local data; its explicit Sync button performs collection.
+`ytclaw --db demo.sqlite demo` creates labeled synthetic data in a new database.
+
+## SQL and schema
+
+SQL is read-only at the SQLite boundary. Tables include `channels`, `videos`,
+`metadata_versions`, `metadata_baselines`, `thumbnail_assets`, `stats_observations`,
+`comments`, `transcript_segments`, `collection_status`, `sync_runs`, `project_links`,
+`watch_jobs`, `owner_reports`, and `experiments`. Legacy `stats_snapshots` remains
+available but cannot recover observation order lost by older versions.
+
+Prefer the supported report commands to hand-written SQL. For a hook excerpt:
+
 ```sql
-select v.title, c.author, c.text from comments c join videos v using(video_id)
-where c.parent_id is null and c.text like '%?%'
-and c.comment_id not in (select parent_id from comments where parent_id is not null)
-order by c.published_at desc limit 40
+select v.video_id, v.title, t.start, t.text
+from videos v join transcript_segments t using(video_id)
+where t.start < 15 order by v.published_at desc, t.idx;
 ```
 
-**Hook audit: first 15 seconds of the last N videos**
-```sql
-select v.video_id, v.title, group_concat(t.text, ' ') hook from videos v
-join transcript_segments t on t.video_id=v.video_id and t.start < 15
-where v.published_at > date('now','-60 days') group by v.video_id order by v.published_at desc
-```
-
-**Velocity: views gained between two syncs**
-```sql
-select video_id, min(views) first_seen, max(views) latest, max(views)-min(views) gained
-from stats_snapshots group by video_id order by gained desc limit 20
-```
-
-**Competitor gap**
-Sync a competitor with `--comments`, then search their comments for the topic. Their audience's open questions are your video list.
-
-**Cross-channel compare**
-```sql
-select c.handle, count(*) videos, avg(v.views) avg_views from videos v join channels c using(channel_id) group by 1
-```
-
-## Schema quick reference
-
-`channels`, `channel_snapshots`, `videos` (latest stats + `first_seen_at`/`last_seen_at`/`seen_count`), `stats_snapshots` (content-hashed history), `comments` (`parent_id` for replies), `transcript_segments` (`idx`, `start`, `duration`, `text`), `unresolved` (negative cache with TTL), `sync_cache` (cursors, quota ledger), `videos_fts`, `transcript_fts`, `comments_fts`.
-
-## Output
-
-Cite the video ID or URL for every claim. Report `NO DATA` when a table is empty for that channel instead of guessing. Never state a number you did not read from a query.
-
-## Metadata drift and image history
-
-Use `ytclaw baseline VIDEO_ID` to pin the current local metadata before external edits.
-Run `ytclaw sync @handle --thumbnails` to refresh metadata and archive image bytes,
-then `ytclaw drift VIDEO_ID` for baseline differences or `ytclaw history VIDEO_ID`
-for all observed versions. `ytclaw thumbnail SHA256 OUTPUT` exports archived bytes
-without overwriting files. Reads are local; drift requires a preceding sync to reflect
-YouTube. Tracking cannot recover unobserved edits. Baseline replaces an existing pin.
+Consult README.md and docs/ for precise setup, scheduler behavior, and CSV units.
